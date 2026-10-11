@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 内容主体是 Markdown 技能文档，工具代码是零依赖 Node.js（>=22，当前受支持 LTS，ESM）。**没有构建步骤**——技能即目录，改完跑校验即可。
 
+仓库按 LF 存储（`.gitattributes`：`* text=auto eol=lf`）。校验与转换按 LF 解析 frontmatter 与能力注册表，Windows 上 `core.autocrlf=true` 的**旧检出**会把技能读成 CRLF 并让 `node validate.mjs` 整库报错（`missing frontmatter` + 能力标签全判未注册）；重新检出即可，或把工作树按 LF 归一（`lib/frontmatter.mjs` 自身已容错 CRLF，但注册表读取还没有）。
+
 双许可：技能文档内容 CC BY 4.0，工具代码（`bin/`、`validate.mjs`、`tests/`）Apache-2.0。新增文件注意落在正确一侧。
 
 ## 常用命令
@@ -31,9 +33,17 @@ node bin/auditstate.mjs status                  # 增量审查：哪些技能内
 node bin/auditstate.mjs update <技能...>         # 复核后回填（写当前 hash + 日期）
 node bin/probelist.mjs                          # 由登记表生成 probe.sh 的工具清单（--check 校验新鲜度，npm test 已含）
 
-npx rev-skills install --target <claude|gemini|cline|codex|cursor|copilot|windsurf|all> \
+npx rev-skills install --target <claude|gemini|cline|codex|cursor|copilot|windsurf|dsh|all> \
   [--global|--project] [--dry-run] [--link] [--force]
 node bin/convert.mjs --target <cursor|copilot|windsurf> --out <dir>   # 技能 → 规则文件转换（调试用）
+
+node bin/dsh.mjs check [--dir <skillsRoot>] [--json]   # 按 DSH 发现规则校验技能根：通过则输出 OK: N skills DSH-compatible
+node bin/dsh.mjs preset spec                    # 打印预设配置（含技能根解析结果与 REV_SKILLS_DIR 覆盖）
+node bin/dsh.mjs preset status [--profile-dir <dir>] [--json]   # 只读检查 profile 是否已启用该 bundle
+node bin/dsh.mjs preset install [--profile-dir <dir>] [--force] [--apply]    # 默认 dry-run，--apply 才写（写前备份）
+node bin/dsh.mjs preset uninstall [--profile-dir <dir>] [--apply]           # 默认 dry-run，有备份时从备份还原
+npx rev-skills install --target dsh --global    # 技能装进 DSH 技能根（~/.dsh/skills）
+npx rev-skills install --target dsh --project   # → .dsh/skills
 
 node bin/wxsource.mjs kanxue list [--board re] [--pages 2] [--md]     # 看雪论坛列表（经验采集源）
 node bin/wxsource.mjs kanxue thread <帖子ID> [--md]
@@ -42,7 +52,7 @@ node bin/wxsource.mjs wechat <文章URL> [--md]
 
 `node validate.mjs` 输出的技能数必须等于 `.claude/skills/` 下 `re-` 目录数——**这条已有自动检查**（`tests/counts.test.mjs` 比对 README / README_EN / AGENTS / CLAUDE / package.json / marketplace.json 六处的计数），不必再靠人工 grep。
 
-**检查分层**（`npm test` = validate + 170 项测试；该计数由 `tests/counts.test.mjs` 自校验，增删测试后需同步此处）：
+**检查分层**（`npm test` = validate + 203 项测试；该计数由 `tests/counts.test.mjs` 自校验，增删测试后需同步此处）：
 
 | 层 | 查什么 | 落点 |
 |---|---|---|
@@ -51,6 +61,17 @@ node bin/wxsource.mjs wechat <文章URL> [--md]
 | 语法 | 技能里 python / shell 示例块（含 sh 内嵌 python heredoc） | `tests/examples`（无解释器则跳过） |
 | 事实 | 已修缺陷的**回归断言**（错的说法不得写回）、格式断言 fixture | `tests/audit-regressions` `tests/format-fixtures` |
 | 预算 | SKILL.md ≤240 行、单分支 ≤600 行、必备章节仍在 | `tests/skill-budget` |
+
+## DSH（DeepSeek Harness）集成
+
+两种集成形态，改动时都要与计数/清单同步：
+
+- **技能目录路线**：`npx rev-skills install --target dsh [--global|--project]`——写入 DSH 技能根（全局 `<dshHome>/skills`，项目 `.dsh/skills`）。DSH 按 Agent Skills 风格扫描，一层深度（`<root>/<name>/SKILL.md`），frontmatter 的 `---` 分界行与 YAML 合法性由 DSH 严格执行：不合法时记告警并**静默跳过该技能**（新技能要跑 `node validate.mjs`，别只看 `npm test` 的汇总行）。
+- **独立预设路线**：**根包自身即 bundle**（`rev-skills`），根 `package.json` 用 `"dsh": { "bundle": { "patch": "./dsh.patch.yml" } }` 指向仓库根的补丁文件，补丁插入预设行 `preset-rev-skills`（`config.id` = `rev-skills`），该预设用 `includeDefaultRoots: false` + `customSkillDirs` 给预设自带本库 `.claude/skills` 技能层（该提供方实例不再重复扫描项目/用户技能根；技能服务读取时仍把预设层与全局层合并，同名以预设层为准，其他预设不受影响）；目录可用环境变量 `REV_SKILLS_DIR` 覆盖。启用方式：`dsh plugin --profile <profile> add rev-skills`（宿主的包管理器会自动登记 `dsh.profile.bundles` 行；本地路径用 `link:` / `file:` 规格），或仓库自带 CLI `node bin/dsh.mjs preset install --apply`。
+
+必须成对同步的项（历史上漏同步过）：根 `package.json` 的 `dsh.bundle.patch` ↔ `dsh.patch.yml` 实际路径 ↔ **该路径必须出现在根 `package.json` 的 `files` 里**（pnpm 按 `files` 复制 `file:` 依赖，漏列则 `dsh plugin add` 报 `failed to read overlay … ENOENT` 并整体回滚，测试有回归断言）；根 `package.json` 的 `name` ↔ profile 里 `dsh.profile.bundles` 的对应行与同名依赖；补丁里的 `config.id`（`rev-skills`）↔ `docs/dsh-integration.md` 的说明。
+
+标准预设会裁剪超过 8192 字符的工具结果，本库 32 个 `SKILL.md` 的文件字符数超过该阈值（CRLF 检出下为 34；`node bin/dsh.mjs check` 会逐条报出），被加载时可能被截断（完整内容直接读文件）。集成全貌与排错表见 `docs/dsh-integration.md`。
 
 ## 架构：三层技能图，按状态机运转
 

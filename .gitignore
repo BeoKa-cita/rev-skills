@@ -9,3 +9,13 @@ node_modules/
 /analysis/
 /demo_target.*
 /sandbox.sh
+
+# ===== 环境变量 / 密钥（禁止提交）=====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
